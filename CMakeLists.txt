@@ -3,4 +3,4 @@ project(DHCP_V1 C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(DHCP_V1 main.c common.h)
+add_executable(DHCP_V1 main.c )
