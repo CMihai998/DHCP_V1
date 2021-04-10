@@ -30,7 +30,6 @@ struct SLL {
     struct in_addr *start_address;
     struct in_addr *end_address;
     struct in_addr *next_free_address;
-
 };
 
 /**
