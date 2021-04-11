@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <time.h>
+#include <unistd.h>
+
+#define DHCP_PORT 6969
 
 /**
  * Node used in SLL
@@ -178,7 +181,7 @@ in_addr_t delete_element(struct SLL *list, struct in_addr *element) {
         return found;
 
     if (list->head == list->tail) {
-        if (list->head == element) {
+        if (list->head->data->s_addr == element->s_addr) {
             free(list->head);
             free(list->tail);
             list->head = NULL;
@@ -215,7 +218,7 @@ in_addr_t delete_element(struct SLL *list, struct in_addr *element) {
  */
 in_addr_t get_random_in_range(in_addr_t lower, in_addr_t upper) {
     srand(time(0));
-    return (rand() % (upper - lower  + 1)) + upper;
+    return (rand() % (upper - lower  + 1)) + lower;
 }
 
 /**
@@ -278,16 +281,17 @@ void error(char *message) {
  * @param from_length - int: length of
  * @return -
  */
-void receive_configuration(int sock, struct sockaddr_in from, int from_length, struct SLL *list) {
+void receive_configuration(int sock, struct sockaddr_in *from, int from_length, struct SLL *list) {
     printf("Receiving configuration...\n");
     init_SLL(list);
-
-    if (recvfrom(sock, list->start_address, sizeof (struct in_addr), 0, (struct sockaddr*) &from, &from_length) < 0)
+    list->start_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    list->end_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    if (recvfrom(sock, &list->start_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - receive_configuration -> receive start address");
     else
         printf("\tReceived: start address: %d\n", list->start_address->s_addr);
 
-    if (recvfrom(sock, list->end_address, sizeof (struct in_addr), 0, (struct sockaddr*) &from, &from_length) < 0)
+    if (recvfrom(sock, &list->end_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - receive_configuration -> receive end address");
     else
         printf("\tReceived: end address: %d\n-----------------\n", list->end_address->s_addr);
@@ -305,10 +309,10 @@ void receive_configuration(int sock, struct sockaddr_in from, int from_length, s
  * @param from_length - int: length of
  * @return -
  */
-void send_address(int sock, struct sockaddr_in from, int from_length, struct SLL *list) {
+void send_address(int sock, struct sockaddr_in *from, int from_length, struct SLL *list) {
     printf("Sending address...\n");
 
-    if( sendto(sock, list->next_free_address, sizeof (struct in_addr), 0, (struct sockaddr *)&from, from_length) < 0 )
+    if( sendto(sock, &list->next_free_address->s_addr, sizeof (in_addr_t), 0, from, from_length) < 0 )
         error("sendto() - send_address -> send of address failed");
     else
         printf("\tSend: address: %d\n-----------------\n", list->next_free_address->s_addr);
@@ -324,12 +328,12 @@ void send_address(int sock, struct sockaddr_in from, int from_length, struct SLL
  * @param from_length - int: length of
  * @return -
  */
-void return_address(int sock, struct sockaddr_in from, int from_length, struct SLL *list) {
+void return_address(int sock, struct sockaddr_in *from, int from_length, struct SLL *list) {
     printf("Getting returned address...\n");
 
     struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
 
-    if (recvfrom(sock, returned_address, sizeof (struct in_addr), 0, (struct sockaddr*) &from, &from_length) < 0)
+    if (recvfrom(sock, returned_address, sizeof (struct in_addr), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - return_address -> receive returned address");
     else
         printf("\tReceived: returned address: %d\n-----------------\n", returned_address->s_addr);
@@ -342,17 +346,28 @@ void return_address(int sock, struct sockaddr_in from, int from_length, struct S
 }
 
 /**
+ * Shuts server down
+ * @param sock
+ * @param list
+ */
+void shutdown_server(int sock, struct SLL *list) {
+    print_list(list);
+    empty_list(list);
+    close(sock);
+}
+
+/**
  * Listens for a request and send it to the handler
  * @param sock
  * @param from
- * @param request
  * @param status
  * @param from_length
  * @param list
  * @return
  */
-int handle_listen(int sock, struct sockaddr_in from, int request, int status, int from_length, struct SLL* list) {
-    status = recvfrom(sock, &request, sizeof(int),0, (struct sockaddr *)&from, &from_length);
+int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct SLL* list) {
+    int request = 0;
+    status = recvfrom(sock, &request, sizeof(int),0, (struct sockaddr*)from, &from_length);
     if (status < 0)
         error("recvfrom() - handle_listen -> request failed");
 
@@ -367,7 +382,7 @@ int handle_listen(int sock, struct sockaddr_in from, int request, int status, in
             break;
         case 2:
             //return address
-            return_address(sock, from, from_length, list);
+            return_address(sock, &from, from_length, list);
             break;
         case 3:
             //renew lease (return + get address)
@@ -376,7 +391,7 @@ int handle_listen(int sock, struct sockaddr_in from, int request, int status, in
             break;
         case 0:
             //shutdown
-            empty_list(list);
+            shutdown_server(sock, list);
             break;
     }
 
@@ -413,8 +428,8 @@ void SLL_usage() {
 int main(int argc, char *argv[]) {
 
     int sock, server_length, from_length, n, message_code = 1, request, status;
-    struct sockaddr_in server;
-    struct sockaddr_in from;
+    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
     struct SLL *list = (struct SLL *) malloc(sizeof (struct SLL));
 
 
@@ -422,18 +437,17 @@ int main(int argc, char *argv[]) {
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
         error("socket()");
+    server->sin_family = AF_INET;
+    server->sin_addr.s_addr = INADDR_ANY;
+    server->sin_port = htons(DHCP_PORT);
+    server_length = sizeof (struct sockaddr_in);
 
-    server_length = sizeof server;
-    bzero(&server, server_length);
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = INADDR_ANY;
-    server.sin_port = htons(atoi("8888"));
-    if (bind(sock, (struct sockaddr*)&server, server_length) < 0)
+    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
         error("bind()");
 
-    from_length = sizeof from;
-    while(message_code)
-        message_code = handle_listen(sock, from, request, status, from_length, list);
+
+    while(message_code != 0)
+        message_code = handle_listen(sock, from, server, status, from_length, list);
 
     return 0;
 }
