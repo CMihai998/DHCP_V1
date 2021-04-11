@@ -197,6 +197,13 @@ in_addr_t delete_element(struct SLL *list, struct in_addr *element) {
         struct node *current = list->head->next;
         struct node *to_delete;
 
+        if (current->data->s_addr == element->s_addr) {
+            list->head->next = current->next;
+            found = current->data->s_addr;
+            free(current);
+
+            goto end;
+        }
         while (current->next->data->s_addr != element->s_addr)
             current = current->next;
 
@@ -206,7 +213,7 @@ in_addr_t delete_element(struct SLL *list, struct in_addr *element) {
 
         free(to_delete);
     }
-
+    end:
     return found;
 }
 
@@ -333,7 +340,7 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
 
     struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
 
-    if (recvfrom(sock, returned_address, sizeof (struct in_addr), 0, (struct sockaddr*)from, &from_length) < 0)
+    if (recvfrom(sock, &returned_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - return_address -> receive returned address");
     else
         printf("\tReceived: returned address: %d\n-----------------\n", returned_address->s_addr);
@@ -382,7 +389,7 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
             break;
         case 2:
             //return address
-            return_address(sock, &from, from_length, list);
+            return_address(sock, from, from_length, list);
             break;
         case 3:
             //renew lease (return + get address)
