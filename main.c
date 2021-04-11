@@ -405,33 +405,6 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
     return request;
 }
 
-void SLL_usage() {
-    struct in_addr *d1 = (struct in_addr*) malloc(sizeof (struct in_addr));
-    struct in_addr *d2 = (struct in_addr*) malloc(sizeof (struct in_addr));
-    struct in_addr *d3 = (struct in_addr*) malloc(sizeof (struct in_addr));
-    d1->s_addr = 1;
-    d2->s_addr = 2;
-    d3->s_addr = 3;
-
-    struct SLL *list = (struct SLL *) malloc(sizeof (struct SLL));
-    init_SLL(list);
-
-    add_at_tail(list, d1);
-    add_at_tail(list, d2);
-    add_at_tail(list, d3);
-
-    print_list(list);
-
-    delete_from_head(list);
-    print_list(list);
-
-    delete_from_tail(list);
-    print_list(list);
-
-    empty_list(list);
-}
-
-
 int main(int argc, char *argv[]) {
 
     int sock, server_length, from_length, n, message_code = 1, request, status;
