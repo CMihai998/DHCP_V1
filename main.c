@@ -19,6 +19,13 @@ struct node{
     struct node *next;
 };
 
+struct State {
+    struct SLL *list;
+    struct in_addr *start_address;
+    struct in_addr *end_address;
+    struct in_addr *next_free_address;
+};
+
 /**
  * SLL structure
  *  - head - *node: first element in SLL
@@ -30,9 +37,6 @@ struct node{
 struct SLL {
     struct node *head;
     struct node *tail;
-    struct in_addr *start_address;
-    struct in_addr *end_address;
-    struct in_addr *next_free_address;
 };
 
 /**
@@ -40,12 +44,13 @@ struct SLL {
  * @param list - *SLL: address of list that needs initialization
  * @return -
  */
-void init_SLL(struct SLL *list) {
-    list->head = NULL;
-    list->tail = NULL;
-    list->start_address = NULL;
-    list->end_address = NULL;
-    list->next_free_address = NULL;
+void init_SLL(struct State *state) {
+    state->list = (struct SLL *) malloc(sizeof (struct SLL));
+    state->list->head = NULL;
+    state->list->tail = NULL;
+    state->start_address = NULL;
+    state->end_address = NULL;
+    state->next_free_address = NULL;
 }
 
 /**
@@ -233,14 +238,14 @@ in_addr_t get_random_in_range(in_addr_t lower, in_addr_t upper) {
  * @param list
  * @return -
  */
-void change_free_address(struct SLL *list) {
+void change_free_address(struct State *state) {
     struct in_addr *first_free = (struct in_addr*) malloc(sizeof (struct in_addr));
-    first_free->s_addr = get_random_in_range(list->start_address->s_addr,list->end_address->s_addr);
+    first_free->s_addr = get_random_in_range(state->start_address->s_addr,state->end_address->s_addr);
 
-    while (find_element(list, first_free))
-        first_free->s_addr = get_random_in_range(list->start_address->s_addr, list->end_address->s_addr);
+    while (find_element(state->list, first_free))
+        first_free->s_addr = get_random_in_range(state->start_address->s_addr, state->end_address->s_addr);
 
-    list->next_free_address = first_free;
+    state->next_free_address = first_free;
 }
 
 /**
@@ -288,25 +293,25 @@ void error(char *message) {
  * @param from_length - int: length of
  * @return -
  */
-void receive_configuration(int sock, struct sockaddr_in *from, int from_length, struct SLL *list) {
+void receive_configuration(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
     printf("Receiving configuration...\n");
-    init_SLL(list);
-    list->start_address = (struct in_addr*) malloc(sizeof (struct in_addr));
-    list->end_address = (struct in_addr*) malloc(sizeof (struct in_addr));
-    if (recvfrom(sock, &list->start_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
+    init_SLL(state);
+    state->start_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    state->end_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    if (recvfrom(sock, &state->start_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - receive_configuration -> receive start address");
     else
-        printf("\tReceived: start address: %d\n", list->start_address->s_addr);
+        printf("\tReceived: start address: %d\n", state->start_address->s_addr);
 
-    if (recvfrom(sock, &list->end_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
+    if (recvfrom(sock, &state->end_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - receive_configuration -> receive end address");
     else
-        printf("\tReceived: end address: %d\n-----------------\n", list->end_address->s_addr);
+        printf("\tReceived: end address: %d\n-----------------\n", state->end_address->s_addr);
 
     struct in_addr *first_free = (struct in_addr*) malloc(sizeof (struct in_addr));
-    first_free->s_addr = get_random_in_range(list->start_address->s_addr, list->end_address->s_addr);
+    first_free->s_addr = get_random_in_range(state->start_address->s_addr, state->end_address->s_addr);
 
-    list->next_free_address = first_free;
+    state->next_free_address = first_free;
 }
 
 /**
@@ -316,16 +321,16 @@ void receive_configuration(int sock, struct sockaddr_in *from, int from_length, 
  * @param from_length - int: length of
  * @return -
  */
-void send_address(int sock, struct sockaddr_in *from, int from_length, struct SLL *list) {
+void send_address(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
     printf("Sending address...\n");
 
-    if( sendto(sock, &list->next_free_address->s_addr, sizeof (in_addr_t), 0, from, from_length) < 0 )
+    if( sendto(sock, &state->next_free_address->s_addr, sizeof (in_addr_t), 0, from, from_length) < 0 )
         error("sendto() - send_address -> send of address failed");
     else
-        printf("\tSend: address: %d\n-----------------\n", list->next_free_address->s_addr);
+        printf("\tSend: address: %d\n-----------------\n", state->next_free_address->s_addr);
 
-    add_at_tail(list, list->next_free_address);
-    change_free_address(list);
+    add_at_tail(state->list, state->next_free_address);
+    change_free_address(state);
 }
 
 /**
@@ -335,7 +340,7 @@ void send_address(int sock, struct sockaddr_in *from, int from_length, struct SL
  * @param from_length - int: length of
  * @return -
  */
-void return_address(int sock, struct sockaddr_in *from, int from_length, struct SLL *list) {
+void return_address(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
     printf("Getting returned address...\n");
 
     struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
@@ -346,7 +351,7 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
         printf("\tReceived: returned address: %d\n-----------------\n", returned_address->s_addr);
 
 
-    if (delete_element(list, returned_address) < 0)
+    if (delete_element(state->list, returned_address) < 0)
         error("delete_element() - address not found");
 
     free(returned_address);
@@ -357,10 +362,11 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
  * @param sock
  * @param list
  */
-void shutdown_server(int sock, struct SLL *list) {
-    print_list(list);
-    empty_list(list);
+void shutdown_server(int sock, struct State *state) {
+    print_list(state->list);
+    empty_list(state->list);
     close(sock);
+    free(state);
 }
 
 /**
@@ -372,7 +378,7 @@ void shutdown_server(int sock, struct SLL *list) {
  * @param list
  * @return
  */
-int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct SLL* list) {
+int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
     int request = 0;
     status = recvfrom(sock, &request, sizeof(int),0, (struct sockaddr*)from, &from_length);
     if (status < 0)
@@ -381,15 +387,15 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
     switch (request) {
         case -1:
             //configure
-            receive_configuration(sock, from, from_length, list);
+            receive_configuration(sock, from, from_length, state);
             break;
         case 1:
             //get address
-            send_address(sock, from, from_length, list);
+            send_address(sock, from, from_length, state);
             break;
         case 2:
             //return address
-            return_address(sock, from, from_length, list);
+            return_address(sock, from, from_length, state);
             break;
         case 3:
             //renew lease (return + get address)
@@ -398,7 +404,7 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
             break;
         case 0:
             //shutdown
-            shutdown_server(sock, list);
+            shutdown_server(sock, state);
             break;
     }
 
@@ -410,7 +416,7 @@ int main(int argc, char *argv[]) {
     int sock, server_length, from_length, n, message_code = 1, request, status;
     struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
     struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct SLL *list = (struct SLL *) malloc(sizeof (struct SLL));
+    struct State *state = (struct State *) malloc(sizeof (struct State));
 
 
 
@@ -427,7 +433,7 @@ int main(int argc, char *argv[]) {
 
 
     while(message_code != 0)
-        message_code = handle_listen(sock, from, server, status, from_length, list);
+        message_code = handle_listen(sock, from, server, status, from_length, state);
 
     return 0;
 }
