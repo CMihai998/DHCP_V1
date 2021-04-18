@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <pthread.h>
 
 #define DHCP_PORT 6969
 
@@ -411,29 +413,52 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
     return request;
 }
 
+void *myTh(void *sll) {
+    sll = (struct SLL*) sll;
+    struct in_addr *addr2 = (struct in_addr*) malloc(sizeof (struct in_addr));
+
+    add_at_head(sll, addr2);
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
 
-    int sock, server_length, from_length, n, message_code = 1, request, status;
-    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct State *state = (struct State *) malloc(sizeof (struct State));
+//    int sock, server_length, from_length, n, message_code = 1, request, status;
+//    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+//    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+//    struct State *state = (struct State *) malloc(sizeof (struct State));
+//
+//
+//
+//    sock = socket(AF_INET, SOCK_DGRAM, 0);
+//    if (sock < 0)
+//        error("socket()");
+//    server->sin_family = AF_INET;
+//    server->sin_addr.s_addr = INADDR_ANY;
+//    server->sin_port = htons(DHCP_PORT);
+//    server_length = sizeof (struct sockaddr_in);
+//
+//    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
+//        error("bind()");
+//
+//
+//    while(message_code != 0)
+//        message_code = handle_listen(sock, from, server, status, from_length, state);
+
+    struct SLL *sll = (struct SLL *) malloc(sizeof(struct SLL));
+    sll->head = NULL;
+    sll->tail = NULL;
+    struct in_addr *addr1 = (struct in_addr*) malloc(sizeof (struct in_addr));
+    addr1->s_addr = 1;
+    add_at_head(sll, addr1);
+
+    pthread_t th;
+    pthread_create(&th, NULL, myTh, (void*) sll);
+
+    sleep(10);
+    print_list(sll);
 
 
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0)
-        error("socket()");
-    server->sin_family = AF_INET;
-    server->sin_addr.s_addr = INADDR_ANY;
-    server->sin_port = htons(DHCP_PORT);
-    server_length = sizeof (struct sockaddr_in);
-
-    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
-        error("bind()");
-
-
-    while(message_code != 0)
-        message_code = handle_listen(sock, from, server, status, from_length, state);
 
     return 0;
 }
