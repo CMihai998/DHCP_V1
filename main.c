@@ -360,6 +360,26 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
 }
 
 /**
+ * Receiving real IP address of the client
+ * @param sock
+ * @param from
+ * @param from_length
+ * @return address of the client
+ */
+struct in_addr* receive_address(int sock, struct sockaddr_in *from, int from_length) {
+    printf("Getting client's IP address...\n");
+
+    struct in_addr *client_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+
+    if (recvfrom(sock, &client_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
+        error("recvfrom() - receive_address -> receive client's address");
+    else
+        printf("\tReceived: client's address: %d\n-----------------\n", client_address->s_addr);
+
+    return client_address;
+}
+
+/**
  * Shuts server down
  * @param sock
  * @param list
@@ -400,6 +420,10 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
             return_address(sock, from, from_length, state);
             break;
         case 3:
+            //receive address of the client
+            receive_address(sock, from, from_length);
+            break;
+        case 4:
             //renew lease (return + get address)
             //might not do it this way, because, lease time might be incremented from client side
             //only will do that if we want to change the address
@@ -423,40 +447,40 @@ void *myTh(void *sll) {
 
 int main(int argc, char *argv[]) {
 
-//    int sock, server_length, from_length, n, message_code = 1, request, status;
-//    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-//    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-//    struct State *state = (struct State *) malloc(sizeof (struct State));
-//
-//
-//
-//    sock = socket(AF_INET, SOCK_DGRAM, 0);
-//    if (sock < 0)
-//        error("socket()");
-//    server->sin_family = AF_INET;
-//    server->sin_addr.s_addr = INADDR_ANY;
-//    server->sin_port = htons(DHCP_PORT);
-//    server_length = sizeof (struct sockaddr_in);
-//
-//    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
-//        error("bind()");
-//
-//
-//    while(message_code != 0)
-//        message_code = handle_listen(sock, from, server, status, from_length, state);
+    int sock, server_length, from_length, n, message_code = 1, request, status;
+    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct State *state = (struct State *) malloc(sizeof (struct State));
 
-    struct SLL *sll = (struct SLL *) malloc(sizeof(struct SLL));
-    sll->head = NULL;
-    sll->tail = NULL;
-    struct in_addr *addr1 = (struct in_addr*) malloc(sizeof (struct in_addr));
-    addr1->s_addr = 1;
-    add_at_head(sll, addr1);
 
-    pthread_t th;
-    pthread_create(&th, NULL, myTh, (void*) sll);
 
-    sleep(10);
-    print_list(sll);
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+        error("socket()");
+    server->sin_family = AF_INET;
+    server->sin_addr.s_addr = INADDR_ANY;
+    server->sin_port = htons(DHCP_PORT);
+    server_length = sizeof (struct sockaddr_in);
+
+    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
+        error("bind()");
+
+
+    while(message_code != 0)
+        message_code = handle_listen(sock, from, server, status, from_length, state);
+
+//    struct SLL *sll = (struct SLL *) malloc(sizeof(struct SLL));
+//    sll->head = NULL;
+//    sll->tail = NULL;
+//    struct in_addr *addr1 = (struct in_addr*) malloc(sizeof (struct in_addr));
+//    addr1->s_addr = 1;
+//    add_at_head(sll, addr1);
+//
+//    pthread_t th;
+//    pthread_create(&th, NULL, myTh, (void*) sll);
+//
+//    sleep(10);
+//    print_list(sll);
 
 
 
