@@ -8,8 +8,22 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <pthread.h>
+#include <ifaddrs.h>
 
+#define WG_INTERFACE_NAME "wg0"
 #define DHCP_PORT 6969
+#define CONFIG_FILE "/etc/wireguard/wg0.conf"
+#define START_INTERFACE_COMMAND "wg-quick up wg0"
+#define STOP_INTERFACE_COMMAND "wg-quick down wg0"
+
+
+bool SHUTDOWN = false;
+
+struct Configuration {
+    char PUBLIC_KEY[256];
+    char ALLOWED_IPS[256];
+};
+
 
 /**
  * Node used in SLL
@@ -391,6 +405,52 @@ void shutdown_server(int sock, struct State *state) {
     free(state);
 }
 
+void start_interface() {
+    system(START_INTERFACE_COMMAND);
+}
+
+void stop_interface() {
+    system(STOP_INTERFACE_COMMAND);
+}
+
+
+
+/**
+ * Checks if wireguard interface is down and if so, stops the application
+ * @param sock
+ * @param server
+ * @param server_length
+ */
+void check_for_shutdown(int sock, struct sockaddr_in *server, int server_length) {
+    struct ifaddrs *ifaddr;
+    bool found;
+
+
+    LOOP:
+    sleep(120);
+
+    found = false;
+    if (getifaddrs(&ifaddr) == -1)
+        error("getifaddrs() - check_for_shutdown()");
+
+    for (struct ifaddrs *current = ifaddr; current != NULL && found == false; current = current->ifa_next) {
+        if (current->ifa_addr == NULL)
+            continue;
+
+        if (strcmp(current->ifa_name, WG_INTERFACE_NAME) == 0)
+            found = true;
+    }
+
+    freeifaddrs(ifaddr);
+
+    if (found == false) {
+        SHUTDOWN = true;
+        exit(EXIT_SUCCESS);
+    }
+    goto LOOP;
+}
+
+
 /**
  * Listens for a request and send it to the handler
  * @param sock
@@ -437,6 +497,32 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
     return request;
 }
 
+bool is_auto_configurable() {
+    char line[512], *word_list[64], delimit[] = " ";
+    FILE *config_file;
+    int words_per_line;
+    config_file = fopen(CONFIG_FILE, "r");
+
+    if (config_file == NULL)
+        error("fopen() - CONFIG_FILE");
+
+    while (fgets (line, 512, config_file)) {
+        words_per_line = 0;
+        word_list[words_per_line] = strtok(line, delimit);
+        while (word_list[words_per_line] != NULL)
+            word_list[++words_per_line] = strtok(NULL, delimit);
+
+        if (strcmp(word_list[0], "AutoConfigurable") == 0 && strcmp(word_list[2], "True") == 0) {
+            fclose(config_file);
+            return true;
+        }
+    }
+    fclose(config_file);
+    return false;
+}
+
+
+
 void *myTh(void *sll) {
     sll = (struct SLL*) sll;
     struct in_addr *addr2 = (struct in_addr*) malloc(sizeof (struct in_addr));
@@ -465,6 +551,7 @@ int main(int argc, char *argv[]) {
     if (bind(sock, (struct sockaddr*)server, server_length) < 0)
         error("bind()");
 
+    start_interface();
 
     while(message_code != 0)
         message_code = handle_listen(sock, from, server, status, from_length, state);
@@ -483,6 +570,60 @@ int main(int argc, char *argv[]) {
 //    print_list(sll);
 
 
-
+    stop_interface();
     return 0;
 }
+
+
+struct Configuration *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
+    struct Configuration *received_configuration = (struct Configuration*) malloc(sizeof (struct Configuration));
+
+    printf("Receiving configuration...\n");
+    if (recvfrom(sock, &received_configuration, sizeof (received_configuration), 0, (struct sockaddr*)from, &from_length) < 0)
+        error("recvfrom() - receive_client_configuration -> receival of new client configuration");
+    else
+        printf("\tReceived: Configuration:\n"
+               "\tPublic Key: %s\n"
+               "\tAllowed IPs: %s\n",
+               received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS);
+
+    return received_configuration;
+}
+
+void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
+    struct Configuration *new_client = receive_client_configuration(sock, from, from_length);
+}
+
+int run(int argc, char *argv[]) {
+
+    if (!is_auto_configurable()) {
+        start_interface();
+        goto END;
+    }
+
+    int sock, server_length, from_length, n, message_code = 1, request, status;
+    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct State *state = (struct State *) malloc(sizeof (struct State));
+
+
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+        error("socket()");
+    server->sin_family = AF_INET;
+    server->sin_addr.s_addr = INADDR_ANY;
+    server->sin_port = htons(DHCP_PORT);
+    server_length = sizeof (struct sockaddr_in);
+
+    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
+        error("bind()");
+
+    while(!SHUTDOWN)
+        handle_listen(sock, from, server, status, from_length, state);
+
+    END:
+    return 0;
+}
+
+//TODO: update initialization policy: state should be configured by using the data from the config file i.e. IP range
