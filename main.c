@@ -627,3 +627,4 @@ int run(int argc, char *argv[]) {
 }
 
 //TODO: update initialization policy: state should be configured by using the data from the config file i.e. IP range
+//TODO: add a thread that runs the function to check if to close or not the server.
