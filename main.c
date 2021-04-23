@@ -417,11 +417,8 @@ void stop_interface() {
 
 /**
  * Checks if wireguard interface is down and if so, stops the application
- * @param sock
- * @param server
- * @param server_length
  */
-void check_for_shutdown(int sock, struct sockaddr_in *server, int server_length) {
+void *check_for_shutdown() {
     struct ifaddrs *ifaddr;
     bool found;
 
@@ -445,7 +442,7 @@ void check_for_shutdown(int sock, struct sockaddr_in *server, int server_length)
 
     if (found == false) {
         SHUTDOWN = true;
-        exit(EXIT_SUCCESS);
+        return NULL;
     }
     goto LOOP;
 }
@@ -519,16 +516,6 @@ bool is_auto_configurable() {
     }
     fclose(config_file);
     return false;
-}
-
-
-
-void *myTh(void *sll) {
-    sll = (struct SLL*) sll;
-    struct in_addr *addr2 = (struct in_addr*) malloc(sizeof (struct in_addr));
-
-    add_at_head(sll, addr2);
-    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -619,12 +606,17 @@ int run(int argc, char *argv[]) {
     if (bind(sock, (struct sockaddr*)server, server_length) < 0)
         error("bind()");
 
+    pthread_t thread;
+    pthread_create(&thread, NULL, check_for_shutdown, NULL);
+
     while(!SHUTDOWN)
         handle_listen(sock, from, server, status, from_length, state);
+
+    pthread_join(thread, NULL);
+    shutdown_server(sock, state);
 
     END:
     return 0;
 }
 
 //TODO: update initialization policy: state should be configured by using the data from the config file i.e. IP range
-//TODO: add a thread that runs the function to check if to close or not the server.
