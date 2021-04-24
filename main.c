@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #include <ifaddrs.h>
+#include <arpa/inet.h>
 
 #define WG_INTERFACE_NAME "wg0"
 #define DHCP_PORT 6969
@@ -340,7 +341,7 @@ void receive_configuration(int sock, struct sockaddr_in *from, int from_length, 
 void send_address(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
     printf("Sending address...\n");
 
-    if( sendto(sock, &state->next_free_address->s_addr, sizeof (in_addr_t), 0, from, from_length) < 0 )
+    if(sendto(sock, &state->next_free_address->s_addr, sizeof (in_addr_t), 0, (const struct sockaddr *) from, from_length) < 0 )
         error("sendto() - send_address -> send of address failed");
     else
         printf("\tSend: address: %d\n-----------------\n", state->next_free_address->s_addr);
@@ -501,7 +502,7 @@ bool is_auto_configurable() {
     config_file = fopen(CONFIG_FILE, "r");
 
     if (config_file == NULL)
-        error("fopen() - CONFIG_FILE");
+        error("fopen() - is_auto_configurable - CONFIG_FILE");
 
     while (fgets (line, 512, config_file)) {
         words_per_line = 0;
@@ -518,47 +519,64 @@ bool is_auto_configurable() {
     return false;
 }
 
+void configure_state(struct State *state) {
+    char line[512], *word_list[64], delimit[] = " ";
+    FILE *config_file;
+    int words_per_line;
+    config_file = fopen(CONFIG_FILE, "r");
+
+    if (config_file == NULL)
+        error("fopen() - configure_state - CONFIG_FILE");
+
+    while (fgets (line, 512, config_file)) {
+        words_per_line = 0;
+        word_list[words_per_line] = strtok(line, delimit);
+        while (word_list[words_per_line] != NULL)
+            word_list[++words_per_line] = strtok(NULL, delimit);
+
+        if (strcmp(word_list[0], "Address") == 0) {
+            char *address, *mask;
+            address = strtok(word_list[2], "/");
+            mask = strtok(NULL, "/");
+
+            int msk = atoi(mask);
+            struct sockaddr_in a1, a2;
+            inet_pton(AF_INET, address, &(a1.sin_addr));
+
+            printf("-------  %d\n", a1.sin_addr.s_addr);
+
+            a1.sin_addr.s_addr = a1.sin_addr.s_addr;
+
+            char aux[INET_ADDRSTRLEN];
+
+            inet_ntop(AF_INET, &(a1.sin_addr), aux, INET_ADDRSTRLEN);
+
+            printf("addr: %s\nmask: %d", address, msk);
+
+
+            a2.sin_addr.s_addr = 0;
+            for (int i = 0; i < msk; i++) {
+                a2.sin_addr.s_addr <<= 1;
+                a2.sin_addr.s_addr |= 1;
+            }
+
+            inet_ntop(AF_INET, &(a2.sin_addr), aux, INET_ADDRSTRLEN);
+            printf("-------  %s\n", aux);
+
+            fclose(config_file);
+            return;
+        }
+    }
+    fclose(config_file);
+    error("configure_state - "
+          "config file should contain the address of the interface together with the mask to determine allowed peers");
+}
+
 int main(int argc, char *argv[]) {
 
-    int sock, server_length, from_length, n, message_code = 1, request, status;
-    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
     struct State *state = (struct State *) malloc(sizeof (struct State));
+    configure_state(state);
 
-
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0)
-        error("socket()");
-    server->sin_family = AF_INET;
-    server->sin_addr.s_addr = INADDR_ANY;
-    server->sin_port = htons(DHCP_PORT);
-    server_length = sizeof (struct sockaddr_in);
-
-    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
-        error("bind()");
-
-    start_interface();
-
-    while(message_code != 0)
-        message_code = handle_listen(sock, from, server, status, from_length, state);
-
-//    struct SLL *sll = (struct SLL *) malloc(sizeof(struct SLL));
-//    sll->head = NULL;
-//    sll->tail = NULL;
-//    struct in_addr *addr1 = (struct in_addr*) malloc(sizeof (struct in_addr));
-//    addr1->s_addr = 1;
-//    add_at_head(sll, addr1);
-//
-//    pthread_t th;
-//    pthread_create(&th, NULL, myTh, (void*) sll);
-//
-//    sleep(10);
-//    print_list(sll);
-
-
-    stop_interface();
-    return 0;
 }
 
 
@@ -581,12 +599,13 @@ void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, in
     struct Configuration *new_client = receive_client_configuration(sock, from, from_length);
 }
 
-int run(int argc, char *argv[]) {
 
-    if (!is_auto_configurable()) {
-        start_interface();
+
+int run(int argc, char *argv[]) {
+    start_interface();
+
+    if (!is_auto_configurable())
         goto END;
-    }
 
     int sock, server_length, from_length, n, message_code = 1, request, status;
     struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
@@ -605,6 +624,8 @@ int run(int argc, char *argv[]) {
 
     if (bind(sock, (struct sockaddr*)server, server_length) < 0)
         error("bind()");
+
+    configure_state(state);
 
     pthread_t thread;
     pthread_create(&thread, NULL, check_for_shutdown, NULL);
