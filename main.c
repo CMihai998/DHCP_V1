@@ -11,9 +11,10 @@
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 
-#define WG_INTERFACE_NAME "wg0"
+#define WG_INTERFACE_NAME "wg_dummmy"
 #define DHCP_PORT 6969
 #define CONFIG_FILE "/etc/wireguard/wg0.conf"
+#define CONFIG_DUMMY_FILE "/etc/wireguard/wg_dummmy.conf"
 #define START_INTERFACE_COMMAND "wg-quick up wg0"
 #define STOP_INTERFACE_COMMAND "wg-quick down wg0"
 
@@ -639,9 +640,23 @@ struct Configuration *receive_client_configuration(int sock, struct sockaddr_in 
 }
 
 void add_new_peer(struct Configuration *new_client, struct in_addr *client_address) {
-    char command[256] = "route add ", address[256];
+    char command[256] = "route add ", address[256], buffer[2048];
+    FILE *config_file;
 
-    //write to file maybe
+    strcpy(buffer, "[Peer]\nPublicKey = ");
+    strcat(buffer, new_client->PUBLIC_KEY);
+    strcat(buffer, "\nAllowedIPs = ");
+    strcat(buffer, new_client->ALLOWED_IPS);
+//    strcat(buffer, "\nEndpoint = ");
+//    strcat(buffer, new_client->endpoint);
+
+    config_file = fopen(CONFIG_DUMMY_FILE, "a");
+    if (config_file == NULL)
+        error("fopen() - add_new_peer - couldn't open config file");
+
+    fprintf(config_file, "%s", buffer);
+    fclose(config_file);
+
     system("sudo wg addconf wg0 <(wg-quick strip wg0)");
     inet_ntop(AF_INET, client_address, address, 255);
     strcat(command, address);
