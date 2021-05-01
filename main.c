@@ -361,6 +361,7 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
     printf("Getting returned address...\n");
 
     struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    char command[256] = "route del ", address[256];
 
     if (recvfrom(sock, &returned_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - return_address -> receive returned address");
@@ -370,6 +371,10 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
 
     if (delete_element(state->list, returned_address) < 0)
         error("delete_element() - address not found");
+
+    inet_ntop(AF_INET, returned_address, address, 255);
+    strcat(command, address);
+    system(command);
 
     free(returned_address);
 }
@@ -572,36 +577,7 @@ void configure_state(struct State *state) {
           "config file should contain the address of the interface together with the mask to determine allowed peers");
 }
 
-int main(int argc, char *argv[]) {
-
-    struct State *state = (struct State *) malloc(sizeof (struct State));
-    configure_state(state);
-
-}
-
-
-struct Configuration *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
-    struct Configuration *received_configuration = (struct Configuration*) malloc(sizeof (struct Configuration));
-
-    printf("Receiving configuration...\n");
-    if (recvfrom(sock, &received_configuration, sizeof (received_configuration), 0, (struct sockaddr*)from, &from_length) < 0)
-        error("recvfrom() - receive_client_configuration -> receival of new client configuration");
-    else
-        printf("\tReceived: Configuration:\n"
-               "\tPublic Key: %s\n"
-               "\tAllowed IPs: %s\n",
-               received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS);
-
-    return received_configuration;
-}
-
-void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
-    struct Configuration *new_client = receive_client_configuration(sock, from, from_length);
-}
-
-
-
-int run(int argc, char *argv[]) {
+int run() {
     start_interface();
 
     if (!is_auto_configurable())
@@ -640,4 +616,50 @@ int run(int argc, char *argv[]) {
     return 0;
 }
 
-//TODO: update initialization policy: state should be configured by using the data from the config file i.e. IP range
+int main(int argc, char *argv[]) {
+
+    run();
+
+}
+
+
+struct Configuration *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
+    struct Configuration *received_configuration = (struct Configuration*) malloc(sizeof (struct Configuration));
+
+    printf("Receiving configuration...\n");
+    if (recvfrom(sock, &received_configuration, sizeof (received_configuration), 0, (struct sockaddr*)from, &from_length) < 0)
+        error("recvfrom() - receive_client_configuration -> receival of new client configuration");
+    else
+        printf("\tReceived: Configuration:\n"
+               "\tPublic Key: %s\n"
+               "\tAllowed IPs: %s\n",
+               received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS);
+
+    return received_configuration;
+}
+
+void add_new_peer(struct Configuration *new_client, struct in_addr *client_address) {
+    char command[256] = "route add ", address[256];
+
+    //write to file maybe
+    system("sudo wg addconf wg0 <(wg-quick strip wg0)");
+    inet_ntop(AF_INET, client_address, address, 255);
+    strcat(command, address);
+    strcat(command, " wg0");
+    system(command);
+
+}
+
+void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
+    struct Configuration *new_client = receive_client_configuration(sock, from, from_length);
+    send_address(sock, from, from_length, state);
+    add_new_peer(new_client, state->list->tail->data);
+
+}
+
+
+
+
+//TODO: Modify wg0.conf file when new client joins
+//TODO: Remove client from wg0.conf when he logs off
+//TODO: use dummy wg.conf file with AutoSave = False in the case of dynamic usage
