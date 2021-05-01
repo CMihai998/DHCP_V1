@@ -11,13 +11,18 @@
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 
-#define WG_INTERFACE_NAME "wg_dummmy"
+#define WG_INTERFACE_NAME "wg0"
+#define WG_DUMMY_INTERFACE_NAME "wg_dummmy"
+
 #define DHCP_PORT 6969
+
 #define CONFIG_FILE "/etc/wireguard/wg0.conf"
 #define CONFIG_DUMMY_FILE "/etc/wireguard/wg_dummmy.conf"
-#define START_INTERFACE_COMMAND "wg-quick up wg0"
-#define STOP_INTERFACE_COMMAND "wg-quick down wg0"
 
+#define START_INTERFACE_COMMAND "wg-quick up wg0"
+#define START_DUMMY_INTERFACE_COMMAND "wg-quick up wg_dummmy"
+#define STOP_INTERFACE_COMMAND "wg-quick down wg0"
+#define REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf"
 
 bool SHUTDOWN = false;
 
@@ -412,8 +417,41 @@ void shutdown_server(int sock, struct State *state) {
     free(state);
 }
 
-void start_interface() {
-    system(START_INTERFACE_COMMAND);
+void configure_dummy_interface() {
+    char line[512], *word_list[64], delimit[] = " ";
+    FILE *config_file, *dummy_config_file;
+    int words_per_line;
+
+    system(REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND);
+    config_file = fopen(CONFIG_FILE, "r");
+    dummy_config_file = fopen(CONFIG_DUMMY_FILE, "w");
+
+    if (config_file == NULL)
+        error("fopen() - configure_state - CONFIG_FILE");
+
+    while (fgets (line, 512, config_file)) {
+        words_per_line = 0;
+        word_list[words_per_line] = strtok(line, delimit);
+        while (word_list[words_per_line] != NULL)
+            word_list[++words_per_line] = strtok(NULL, delimit);
+
+        if (strcmp(word_list[0], "SaveConfig") == 0 && strcmp(word_list[2], "true"))
+            strcpy(line, "SaveConfig = false\n");
+
+        fprintf(dummy_config_file, "%s", line);
+    }
+    fclose(config_file);
+    fclose(dummy_config_file);
+}
+
+void start_interface(char *interface_name) {
+    if (strcmp(interface_name, WG_INTERFACE_NAME) == 0) {
+        system(START_INTERFACE_COMMAND);
+        return;
+    }
+
+    configure_dummy_interface();
+    system(START_DUMMY_INTERFACE_COMMAND);
 }
 
 void stop_interface() {
@@ -441,7 +479,7 @@ void *check_for_shutdown() {
         if (current->ifa_addr == NULL)
             continue;
 
-        if (strcmp(current->ifa_name, WG_INTERFACE_NAME) == 0)
+        if (strcmp(current->ifa_name, WG_DUMMY_INTERFACE_NAME) == 0)
             found = true;
     }
 
@@ -579,11 +617,13 @@ void configure_state(struct State *state) {
 }
 
 int run() {
-    start_interface();
 
-    if (!is_auto_configurable())
+
+    if (!is_auto_configurable()) {
+        start_interface(WG_INTERFACE_NAME);
         goto END;
-
+    }
+    start_interface(WG_DUMMY_INTERFACE_NAME);
     int sock, server_length, from_length, n, message_code = 1, request, status;
     struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
     struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
