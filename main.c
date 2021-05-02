@@ -26,9 +26,11 @@
 
 bool SHUTDOWN = false;
 
-struct Configuration {
+struct Message {
+    int OPTION;
     char PUBLIC_KEY[256];
     char ALLOWED_IPS[256];
+    in_addr_t ADDRESS;
 };
 
 
@@ -385,6 +387,23 @@ void return_address(int sock, struct sockaddr_in *from, int from_length, struct 
     free(returned_address);
 }
 
+void return_address_v2(struct State *state, in_addr_t address_data) {
+
+    struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    char command[256] = "route del ", address[256];
+
+    returned_address->s_addr = address_data;
+
+    if (delete_element(state->list, returned_address) < 0)
+        error("delete_element() - address not found");
+
+    inet_ntop(AF_INET, returned_address, address, 255);
+    strcat(command, address);
+    system(command);
+
+    free(returned_address);
+}
+
 /**
  * Receiving real IP address of the client
  * @param sock
@@ -403,18 +422,6 @@ struct in_addr* receive_address(int sock, struct sockaddr_in *from, int from_len
         printf("\tReceived: client's address: %d\n-----------------\n", client_address->s_addr);
 
     return client_address;
-}
-
-/**
- * Shuts server down
- * @param sock
- * @param list
- */
-void shutdown_server(int sock, struct State *state) {
-    print_list(state->list);
-    empty_list(state->list);
-    close(sock);
-    free(state);
 }
 
 void configure_dummy_interface() {
@@ -458,7 +465,18 @@ void stop_interface() {
     system(STOP_INTERFACE_COMMAND);
 }
 
-
+/**
+ * Shuts server down
+ * @param sock
+ * @param list
+ */
+void shutdown_server(int sock, struct State *state) {
+    print_list(state->list);
+    empty_list(state->list);
+    close(sock);
+    free(state);
+    stop_interface();
+}
 
 /**
  * Checks if wireguard interface is down and if so, stops the application
@@ -664,14 +682,14 @@ int main(int argc, char *argv[]) {
 }
 
 
-struct Configuration *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
-    struct Configuration *received_configuration = (struct Configuration*) malloc(sizeof (struct Configuration));
+struct Message *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
+    struct Message *received_configuration = (struct Message*) malloc(sizeof (struct Message));
 
     printf("Receiving configuration...\n");
     if (recvfrom(sock, &received_configuration, sizeof (received_configuration), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - receive_client_configuration -> receival of new client configuration");
     else
-        printf("\tReceived: Configuration:\n"
+        printf("\tReceived: Message:\n"
                "\tPublic Key: %s\n"
                "\tAllowed IPs: %s\n",
                received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS);
@@ -679,7 +697,7 @@ struct Configuration *receive_client_configuration(int sock, struct sockaddr_in 
     return received_configuration;
 }
 
-void add_new_peer(struct Configuration *new_client, struct in_addr *client_address) {
+void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     char command[256] = "route add ", address[256], buffer[2048];
     FILE *config_file;
 
@@ -706,13 +724,19 @@ void add_new_peer(struct Configuration *new_client, struct in_addr *client_addre
 }
 
 void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
-    struct Configuration *new_client = receive_client_configuration(sock, from, from_length);
-    send_address(sock, from, from_length, state);
-    add_new_peer(new_client, state->list->tail->data);
+    struct Message *new_client = receive_client_configuration(sock, from, from_length);
+
+    switch (new_client->OPTION) {
+        case 0:
+            send_address(sock, from, from_length, state);
+            add_new_peer(receive_client_configuration(sock, from, from_length), state->list->tail->data);
+            break;
+        case 1:
+            return_address_v2(state, new_client->ADDRESS);
+            break;
+    }
 
 }
-
-
 
 
 //TODO: Modify wg0.conf file when new client joins
