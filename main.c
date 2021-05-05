@@ -19,6 +19,7 @@
 #define CONFIG_FILE "/etc/wireguard/wg0.conf"
 #define CONFIG_DUMMY_FILE "/etc/wireguard/wg_dummmy.conf"
 
+#define CREATE_DUMMY_FILE_COMMAND "touch /etc/wireguard/wg_dummmy.conf"
 #define START_INTERFACE_COMMAND "wg-quick up wg0"
 #define START_DUMMY_INTERFACE_COMMAND "wg-quick up wg_dummmy"
 #define STOP_INTERFACE_COMMAND "wg-quick down wg0"
@@ -425,12 +426,13 @@ struct in_addr* receive_address(int sock, struct sockaddr_in *from, int from_len
 }
 
 void configure_dummy_interface() {
-    char line[512], *word_list[64], delimit[] = " ";
+    char line[512], *word_list[64], delimit[] = " ", new_line[512];
     FILE *config_file, *dummy_config_file;
     int words_per_line;
 
     system(REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND);
     config_file = fopen(CONFIG_FILE, "r");
+    system(CREATE_DUMMY_FILE_COMMAND);
     dummy_config_file = fopen(CONFIG_DUMMY_FILE, "w");
 
     if (config_file == NULL)
@@ -444,8 +446,15 @@ void configure_dummy_interface() {
 
         if (strcmp(word_list[0], "SaveConfig") == 0 && strcmp(word_list[2], "true"))
             strcpy(line, "SaveConfig = false\n");
-
-        fprintf(dummy_config_file, "%s", line);
+        if (strcmp(word_list[0], "AutoConfigurable") != 0) {
+            strcpy(new_line, "");
+            for (int i = 0; i < words_per_line - 1; i++) {
+                strcat(new_line, word_list[i]);
+                strcat(new_line, " ");
+            }
+            strcat(new_line, word_list[words_per_line - 1]);
+            fprintf(dummy_config_file, "%s", new_line);
+        }
     }
     fclose(config_file);
     fclose(dummy_config_file);
@@ -572,13 +581,26 @@ bool is_auto_configurable() {
         while (word_list[words_per_line] != NULL)
             word_list[++words_per_line] = strtok(NULL, delimit);
 
-        if (strcmp(word_list[0], "AutoConfigurable") == 0 && strcmp(word_list[2], "True") == 0) {
+        if (strcmp(word_list[0], "AutoConfigurable") == 0 && strcmp(word_list[2], "True\n") == 0) {
             fclose(config_file);
             return true;
         }
     }
     fclose(config_file);
     return false;
+}
+
+void initialize_state(struct State *state) {
+    state->start_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    state->start_address->s_addr = (in_addr_t*) malloc(sizeof (in_addr_t));
+
+    state->end_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    state->end_address->s_addr = (in_addr_t*) malloc(sizeof (in_addr_t));
+
+    state->next_free_address = (struct in_addr*) malloc(sizeof (struct in_addr));
+    state->next_free_address->s_addr = (in_addr_t*) malloc(sizeof (in_addr_t));
+
+    init_SLL(state);
 }
 
 void configure_state(struct State *state) {
@@ -621,6 +643,10 @@ void configure_state(struct State *state) {
                 a2.sin_addr.s_addr <<= 1;
                 a2.sin_addr.s_addr |= 1;
             }
+            initialize_state(state);
+            state->start_address = &a1.sin_addr;
+            state->end_address = &a2.sin_addr;
+            change_free_address(state);
 
             inet_ntop(AF_INET, &(a2.sin_addr), aux, INET_ADDRSTRLEN);
             printf("-------  %s\n", aux);
@@ -634,65 +660,20 @@ void configure_state(struct State *state) {
           "config file should contain the address of the interface together with the mask to determine allowed peers");
 }
 
-int run() {
-
-
-    if (!is_auto_configurable()) {
-        start_interface(WG_INTERFACE_NAME);
-        goto END;
-    }
-    start_interface(WG_DUMMY_INTERFACE_NAME);
-    int sock, server_length, from_length, n, message_code = 1, request, status;
-    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct State *state = (struct State *) malloc(sizeof (struct State));
-
-
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0)
-        error("socket()");
-    server->sin_family = AF_INET;
-    server->sin_addr.s_addr = INADDR_ANY;
-    server->sin_port = htons(DHCP_PORT);
-    server_length = sizeof (struct sockaddr_in);
-
-    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
-        error("bind()");
-
-    configure_state(state);
-
-    pthread_t thread;
-    pthread_create(&thread, NULL, check_for_shutdown, NULL);
-
-    while(!SHUTDOWN)
-        handle_listen(sock, from, server, status, from_length, state);
-
-    pthread_join(thread, NULL);
-    shutdown_server(sock, state);
-
-    END:
-    return 0;
-}
-
-int main(int argc, char *argv[]) {
-
-    run();
-
-}
-
 
 struct Message *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
     struct Message *received_configuration = (struct Message*) malloc(sizeof (struct Message));
 
     printf("Receiving configuration...\n");
-    if (recvfrom(sock, &received_configuration, sizeof (received_configuration), 0, (struct sockaddr*)from, &from_length) < 0)
+    if (recvfrom(sock, received_configuration, sizeof (struct Message), 0, (struct sockaddr*)from, &from_length) < 0)
         error("recvfrom() - receive_client_configuration -> receival of new client configuration");
     else
-        printf("\tReceived: Message:\n"
-               "\tPublic Key: %s\n"
-               "\tAllowed IPs: %s\n",
-               received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS);
+        printf("Successfully Received: MY_CONFIGURATION (struct Configuration)"
+               "\n\t\tOPTION (int) : %d"
+               "\n\t\tPUBLIC_KEY (char[256]) : %s"
+               "\n\t\tALLOWED_IPS (char[256] : %s"
+               "\n\t\tADDRESS (in_addr_t) : %d\n",
+               received_configuration->OPTION, received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS, received_configuration->ADDRESS);
 
     return received_configuration;
 }
@@ -723,20 +704,128 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
 
 }
 
+
 void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
     struct Message *new_client = receive_client_configuration(sock, from, from_length);
 
     switch (new_client->OPTION) {
         case 0:
             send_address(sock, from, from_length, state);
-            add_new_peer(receive_client_configuration(sock, from, from_length), state->list->tail->data);
+            add_new_peer(new_client, state->list->tail->data);
             break;
         case 1:
             return_address_v2(state, new_client->ADDRESS);
             break;
     }
+}
+
+
+int run() {
+
+
+    if (!is_auto_configurable()) {
+        start_interface(WG_INTERFACE_NAME);
+        goto END;
+    }
+    start_interface(WG_DUMMY_INTERFACE_NAME);
+    int sock, server_length, from_length, n, message_code = 1, request, status;
+    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct State *state = (struct State *) malloc(sizeof (struct State));
+
+
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+        error("socket()");
+    server->sin_family = AF_INET;
+    server->sin_addr.s_addr = htonl(INADDR_ANY);
+    server->sin_port = htons(DHCP_PORT);
+    server_length = sizeof (struct sockaddr_in);
+
+    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
+        error("bind()");
+
+    configure_state(state);
+
+    pthread_t thread;
+    pthread_create(&thread, NULL, check_for_shutdown, NULL);
+
+    while(!SHUTDOWN)
+        run_loop(sock, from, server, status, from_length, state);
+
+    pthread_join(thread, NULL);
+    shutdown_server(sock, state);
+
+    END:
+    return 0;
+}
+
+#define BUFLEN 512	//Max length of buffer
+#define PORT 8888	//The port on which to listen for incoming data
+
+void udp() {
+
+    struct sockaddr_in *si_me = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+    struct sockaddr_in *si_other = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
+
+        int s, i, slen = sizeof(struct sockaddr_in) , recv_len;
+        char buf[BUFLEN];
+
+        //create a UDP socket
+        if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+        {
+            error("socket");
+        }
+
+        // zero out the structure
+
+        si_me->sin_family = AF_INET;
+        si_me->sin_port = htons(PORT);
+        si_me->sin_addr.s_addr = htonl(INADDR_ANY);
+        //bind socket to port
+        if( bind(s , (struct sockaddr*)si_me, slen ) == -1)
+        {
+            error("bind");
+        }
+    struct State *state = (struct State *) malloc(sizeof (struct State));
+    configure_state(state);
+
+    run_loop(s, si_other, si_me, 0, slen, state);
+        //keep listening for data
+
+//        while(1)
+//        {
+//            printf("Waiting for data...");
+//            fflush(stdout);
+//
+//            //try to receive some data, this is a blocking call
+//            if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == -1)
+//            {
+//                error("recvfrom()");
+//            }
+//
+//            //print details of the client/peer and the data received
+//            printf("Received packet from %s:%d\n", inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+//            printf("Data: %s\n" , buf);
+//
+//            //now reply the client with the same data
+//            if (sendto(s, buf, recv_len, 0, (struct sockaddr*) &si_other, slen) == -1)
+//            {
+//                error("sendto()");
+//            }
+//        }
+
+        close(s);
+}
+
+int main(int argc, char *argv[]) {
+
+    udp();
 
 }
+
+
 
 
 //TODO: Modify wg0.conf file when new client joins
