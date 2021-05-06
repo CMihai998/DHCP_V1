@@ -696,7 +696,7 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     fprintf(config_file, "%s", buffer);
     fclose(config_file);
 
-    system("sudo wg addconf wg0 <(wg-quick strip wg0)");
+    system("sudo wg addconf wg_dummmy <(wg-quick strip wg_dummmy)");
     inet_ntop(AF_INET, client_address, address, 255);
     strcat(command, address);
     strcat(command, " wg0");
@@ -790,7 +790,6 @@ void udp() {
         }
     struct State *state = (struct State *) malloc(sizeof (struct State));
     configure_state(state);
-
     run_loop(s, si_other, si_me, 0, slen, state);
         //keep listening for data
 
