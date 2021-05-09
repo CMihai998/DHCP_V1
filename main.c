@@ -14,7 +14,7 @@
 #define WG_INTERFACE_NAME "wg0"
 #define WG_DUMMY_INTERFACE_NAME "wg_dummmy"
 
-#define DHCP_PORT 6969
+#define DHCP_PORT 8888
 
 #define CONFIG_FILE "/etc/wireguard/wg0.conf"
 #define CONFIG_DUMMY_FILE "/etc/wireguard/wg_dummmy.conf"
@@ -22,7 +22,7 @@
 #define CREATE_DUMMY_FILE_COMMAND "touch /etc/wireguard/wg_dummmy.conf"
 #define START_INTERFACE_COMMAND "wg-quick up wg0"
 #define START_DUMMY_INTERFACE_COMMAND "wg-quick up wg_dummmy"
-#define STOP_INTERFACE_COMMAND "wg-quick down wg0"
+#define STOP_INTERFACE_COMMAND "wg-quick down wg_dummmy"
 #define REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf"
 
 bool SHUTDOWN = false;
@@ -32,8 +32,11 @@ struct Message {
     char PUBLIC_KEY[256];
     char ALLOWED_IPS[256];
     in_addr_t ADDRESS;
+    char ENDPOINT[30];
+    char PORT[10];
 };
 
+int NET_MASK;
 
 /**
  * Node used in SLL
@@ -347,13 +350,20 @@ void receive_configuration(int sock, struct sockaddr_in *from, int from_length, 
  * @param from_length - int: length of
  * @return -
  */
-void send_address(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
+void send_address_and_mask(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
+    char *readable_address = inet_ntoa(*state->next_free_address);
+
     printf("Sending address...\n");
 
     if(sendto(sock, &state->next_free_address->s_addr, sizeof (in_addr_t), 0, (const struct sockaddr *) from, from_length) < 0 )
-        error("sendto() - send_address -> send of address failed");
+        error("sendto() - send_address_and_mask -> send of address failed");
     else
-        printf("\tSend: address: %d\n-----------------\n", state->next_free_address->s_addr);
+        printf("\tSent: address: %s\n-----------------\n",  readable_address);
+
+    if(sendto(sock, &NET_MASK, sizeof (int ), 0, (const struct sockaddr *) from, from_length) < 0 )
+        error("sendto() - send_address_and_mask -> send of mask failed");
+    else
+        printf("\tSent: mask: %d\n-----------------\n", NET_MASK);
 
     add_at_tail(state->list, state->next_free_address);
     change_free_address(state);
@@ -542,7 +552,7 @@ int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server
             break;
         case 1:
             //get address
-            send_address(sock, from, from_length, state);
+            send_address_and_mask(sock, from, from_length, state);
             break;
         case 2:
             //return address
@@ -623,7 +633,7 @@ void configure_state(struct State *state) {
             address = strtok(word_list[2], "/");
             mask = strtok(NULL, "/");
 
-            int msk = atoi(mask);
+            NET_MASK= atoi(mask);
             struct sockaddr_in a1, a2;
             inet_pton(AF_INET, address, &(a1.sin_addr));
 
@@ -635,11 +645,11 @@ void configure_state(struct State *state) {
 
             inet_ntop(AF_INET, &(a1.sin_addr), aux, INET_ADDRSTRLEN);
 
-            printf("addr: %s\nmask: %d", address, msk);
+            printf("addr: %s\nmask: %d", address, NET_MASK);
 
 
             a2.sin_addr.s_addr = 0;
-            for (int i = 0; i < msk; i++) {
+            for (int i = 0; i < NET_MASK; i++) {
                 a2.sin_addr.s_addr <<= 1;
                 a2.sin_addr.s_addr |= 1;
             }
@@ -672,22 +682,27 @@ struct Message *receive_client_configuration(int sock, struct sockaddr_in *from,
                "\n\t\tOPTION (int) : %d"
                "\n\t\tPUBLIC_KEY (char[256]) : %s"
                "\n\t\tALLOWED_IPS (char[256] : %s"
-               "\n\t\tADDRESS (in_addr_t) : %d\n",
-               received_configuration->OPTION, received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS, received_configuration->ADDRESS);
+               "\n\t\tADDRESS (in_addr_t) : %d"
+               "\n\t\tENDPOINT (char[30]) : %s"
+               "\n\t\tPORT (char[6]) : %s\n",
+               received_configuration->OPTION, received_configuration->PUBLIC_KEY, received_configuration->ALLOWED_IPS, received_configuration->ADDRESS, received_configuration->ENDPOINT, received_configuration->PORT);
 
     return received_configuration;
 }
 
 void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     char command[256] = "route add ", address[256], buffer[2048];
+    struct in_addr endpoint;
     FILE *config_file;
 
-    strcpy(buffer, "[Peer]\nPublicKey = ");
+    strcpy(buffer, "\n[Peer]\nPublicKey = ");
     strcat(buffer, new_client->PUBLIC_KEY);
-    strcat(buffer, "\nAllowedIPs = ");
+    strcat(buffer, "AllowedIPs = ");
     strcat(buffer, new_client->ALLOWED_IPS);
-//    strcat(buffer, "\nEndpoint = ");
-//    strcat(buffer, new_client->endpoint);
+    strcat(buffer, "Endpoint = ");
+    strcat(buffer, new_client->ENDPOINT);
+    strcat(buffer, ":");
+    strcat(buffer, new_client->PORT);
 
     config_file = fopen(CONFIG_DUMMY_FILE, "a");
     if (config_file == NULL)
@@ -695,11 +710,13 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
 
     fprintf(config_file, "%s", buffer);
     fclose(config_file);
-
-    system("sudo wg addconf wg_dummmy <(wg-quick strip wg_dummmy)");
+    system(STOP_INTERFACE_COMMAND);
+    system(START_DUMMY_INTERFACE_COMMAND);
+    //    system("sudo wg addconf wg_dummmy <(wg-quick strip wg_dummmy)");
     inet_ntop(AF_INET, client_address, address, 255);
-    strcat(command, address);
-    strcat(command, " wg0");
+    fprintf("ADDR: %s/n", address);
+    strcat(command, new_client->ENDPOINT);
+    strcat(command, " wg_dummmy");
     system(command);
 
 }
@@ -710,7 +727,7 @@ void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, in
 
     switch (new_client->OPTION) {
         case 0:
-            send_address(sock, from, from_length, state);
+            send_address_and_mask(sock, from, from_length, state);
             add_new_peer(new_client, state->list->tail->data);
             break;
         case 1:
