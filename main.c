@@ -26,6 +26,7 @@
 #define REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf"
 
 bool SHUTDOWN = false;
+bool DUMMY_INTERFACE_CONFIGURED = false;
 
 struct Message {
     int OPTION;
@@ -464,10 +465,12 @@ void configure_dummy_interface() {
             }
             strcat(new_line, word_list[words_per_line - 1]);
             fprintf(dummy_config_file, "%s", new_line);
+            printf("%s", new_line);
         }
     }
     fclose(config_file);
     fclose(dummy_config_file);
+    printf("pula");
 }
 
 void start_interface(char *interface_name) {
@@ -475,8 +478,10 @@ void start_interface(char *interface_name) {
         system(START_INTERFACE_COMMAND);
         return;
     }
-
-    configure_dummy_interface();
+    if (!DUMMY_INTERFACE_CONFIGURED) {
+        configure_dummy_interface();
+        DUMMY_INTERFACE_CONFIGURED = true;
+    }
     system(START_DUMMY_INTERFACE_COMMAND);
 }
 
@@ -807,6 +812,8 @@ void udp() {
         }
     struct State *state = (struct State *) malloc(sizeof (struct State));
     configure_state(state);
+
+    start_interface(WG_DUMMY_INTERFACE_NAME);
     run_loop(s, si_other, si_me, 0, slen, state);
         //keep listening for data
 
