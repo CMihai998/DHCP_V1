@@ -6,7 +6,6 @@
 #include <stdbool.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/wait.h>
 #include <pthread.h>
 #include <ifaddrs.h>
 #include <arpa/inet.h>
@@ -465,12 +464,10 @@ void configure_dummy_interface() {
             }
             strcat(new_line, word_list[words_per_line - 1]);
             fprintf(dummy_config_file, "%s", new_line);
-            printf("%s", new_line);
         }
     }
     fclose(config_file);
     fclose(dummy_config_file);
-    printf("pula");
 }
 
 void start_interface(char *interface_name) {
