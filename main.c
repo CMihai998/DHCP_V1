@@ -715,15 +715,16 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
 
     fprintf(config_file, "%s", buffer);
     fclose(config_file);
-    system(STOP_INTERFACE_COMMAND);
-    system(START_DUMMY_INTERFACE_COMMAND);
+
     //    system("sudo wg addconf wg_dummmy <(wg-quick strip wg_dummmy)");
     inet_ntop(AF_INET, client_address, address, 255);
     fprintf("ADDR: %s/n", address);
     strcat(command, new_client->ENDPOINT);
     strcat(command, " wg_dummmy");
     system(command);
-
+    sleep(5);
+    system(STOP_INTERFACE_COMMAND);
+    system(START_DUMMY_INTERFACE_COMMAND);
 }
 
 
