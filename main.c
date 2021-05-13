@@ -17,12 +17,15 @@
 
 #define CONFIG_FILE "/etc/wireguard/wg0.conf"
 #define CONFIG_DUMMY_FILE "/etc/wireguard/wg_dummmy.conf"
+#define AUX_FILE "/etc/wireguard/aux.conf"
 
 #define CREATE_DUMMY_FILE_COMMAND "touch /etc/wireguard/wg_dummmy.conf"
 #define START_INTERFACE_COMMAND "wg-quick up wg0"
 #define START_DUMMY_INTERFACE_COMMAND "wg-quick up wg_dummmy"
 #define STOP_INTERFACE_COMMAND "wg-quick down wg_dummmy"
 #define REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf"
+#define CREATE_AUX_FILE_COMMAND "touch /etc/wireguard/aux.conf"
+#define REPLACE_OLD_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf && sudo cp /etc/wireguard/aux.conf sudo rm /etc/wireguard/wg_dummmy.conf && sudo rm /etc/wireguard/aux.conf"
 
 bool SHUTDOWN = false;
 bool DUMMY_INTERFACE_CONFIGURED = false;
@@ -725,16 +728,77 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
 }
 
 
-void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
-    struct Message *new_client = receive_client_configuration(sock, from, from_length);
+void remove_peer(struct Message *peer_information) {
+    uint start_index, end_index, words_per_line, current_index = 0, comparable_endpoint[40];
+    char line[512], *word_list[64], delimit[] = " ";
+    bool found = false;
+    FILE *config_file;
 
-    switch (new_client->OPTION) {
+    config_file = fopen(CONFIG_DUMMY_FILE, "r");
+    if (config_file == NULL)
+        error("fopen() - remove_peer - CONFIG_DUMMY_FILE");
+
+    //read until we get to a [Peer]
+    while (!found && fgets(line, 512, config_file)) {
+        if (strcmp(line, "[Peer]") == 0) {
+            found = true;
+            start_index = current_index;
+            end_index = current_index;
+        }
+        current_index++;
+    }
+
+    found = false;
+    while (!found && fgets(line, 512, config_file)) {
+        words_per_line = 0;
+        word_list[words_per_line] = strtok(line, delimit);
+        while (word_list[words_per_line] != NULL)
+            word_list[++words_per_line] = strtok(NULL, delimit);
+        if (strcmp(word_list[0], "[Peer]") == 0) {
+            start_index = current_index;
+            end_index = current_index;
+        }
+
+        if (strcmp(word_list[0], "Endpoint") == 0) {
+            strcpy(comparable_endpoint, peer_information->ENDPOINT);
+            strcat(comparable_endpoint, ":");
+            strcat(comparable_endpoint, peer_information->PORT);
+//            strcat(comparable_endpoint, "\n");
+            if (strcmp (word_list[2], comparable_endpoint) == 0) {
+                bool peer_indices_set = false;
+                found = true;
+
+                while (!peer_indices_set && fgets(line, 512, config_file)) {
+                    if (strcmp(line, "[Peer]") == 0)
+                        peer_indices_set = true;
+                    else
+                        current_index++;
+                }
+                end_index = current_index;
+            }
+        }
+        current_index++;
+    }
+    fclose(config_file);
+
+    //write to AUX_FILE
+
+
+    system(CREATE_AUX_FILE_COMMAND);
+    system(REPLACE_OLD_CONFIG_FILE_COMMAND);
+}
+
+void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
+    struct Message *new_message = receive_client_configuration(sock, from, from_length);
+
+    switch (new_message->OPTION) {
         case 0:
             send_address_and_mask(sock, from, from_length, state);
-            add_new_peer(new_client, state->list->tail->data);
+            add_new_peer(new_message, state->list->tail->data);
             break;
         case 1:
-            return_address_v2(state, new_client->ADDRESS);
+            return_address_v2(state, new_message->ADDRESS);
+            remove_peer(new_message);
             break;
     }
 }
@@ -839,6 +903,8 @@ void udp() {
 
         close(s);
 }
+
+
 
 int main(int argc, char *argv[]) {
 
