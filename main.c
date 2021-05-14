@@ -732,7 +732,7 @@ void remove_peer(struct Message *peer_information) {
     uint start_index, end_index, words_per_line, current_index = 0, comparable_endpoint[40];
     char line[512], *word_list[64], delimit[] = " ";
     bool found = false;
-    FILE *config_file;
+    FILE *config_file, *aux_file;
 
     config_file = fopen(CONFIG_DUMMY_FILE, "r");
     if (config_file == NULL)
@@ -782,9 +782,21 @@ void remove_peer(struct Message *peer_information) {
     fclose(config_file);
 
     //write to AUX_FILE
-
-
     system(CREATE_AUX_FILE_COMMAND);
+    config_file = fopen(CONFIG_DUMMY_FILE, "r");
+    if (config_file == NULL)
+        error("fopen() - remove_peer - 2nd CONFIG_DUMMY_FILE");
+    aux_file = fopen(AUX_FILE, "w");
+    if (aux_file == NULL)
+        error("fopen() - remove_peer - AUX_FILE");
+    current_index = 0;
+    while (fgets(line, 512, config_file)) {
+        if (current_index < start_index || current_index > end_index)
+            fprintf(aux_file, "%s", line);
+        current_index++;
+    }
+    fclose(config_file);
+    fclose(aux_file);
     system(REPLACE_OLD_CONFIG_FILE_COMMAND);
 }
 
