@@ -695,6 +695,12 @@ struct Message *receive_client_configuration(int sock, struct sockaddr_in *from,
     return received_configuration;
 }
 
+void refresh_interface() {
+    sleep(5);
+    system(STOP_INTERFACE_COMMAND);
+    system(START_DUMMY_INTERFACE_COMMAND);
+}
+
 void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     char command[256] = "route add ", address[256], buffer[2048];
     struct in_addr endpoint;
@@ -722,9 +728,7 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     strcat(command, new_client->ENDPOINT);
     strcat(command, " wg_dummmy");
     system(command);
-    sleep(5);
-    system(STOP_INTERFACE_COMMAND);
-    system(START_DUMMY_INTERFACE_COMMAND);
+    refresh_interface();
 }
 
 void remove_peer(struct Message *peer_information) {
@@ -759,10 +763,10 @@ void remove_peer(struct Message *peer_information) {
             end_index = current_index;
         }
         if (strcmp(word_list[0], "Endpoint") == 0) {
-            strcpy(comparable_endpoint, peer_information->ENDPOINT);
+            strcpy(comparable_endpoint, "");
+            strcat(comparable_endpoint, peer_information->ENDPOINT);
             strcat(comparable_endpoint, ":");
             strcat(comparable_endpoint, peer_information->PORT);
-            strcat(comparable_endpoint, "\n");
             if (strcmp (word_list[2], comparable_endpoint) == 0) {
                 bool peer_indices_set = false;
                 found = true;
@@ -799,6 +803,7 @@ void remove_peer(struct Message *peer_information) {
     fclose(config_file);
     fclose(aux_file);
     system(REPLACE_OLD_CONFIG_FILE_COMMAND);
+    refresh_interface();
 }
 
 void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
@@ -889,7 +894,8 @@ void udp() {
     configure_state(state);
 
     start_interface(WG_DUMMY_INTERFACE_NAME);
-    run_loop(s, si_other, si_me, 0, slen, state);
+    while (true)
+        run_loop(s, si_other, si_me, 0, slen, state);
         //keep listening for data
 
 //        while(1)
@@ -921,23 +927,7 @@ void udp() {
 
 int main(int argc, char *argv[]) {
 
-//    udp();
-    remove_peer();
-
-//    uint start_index, end_index, words_per_line, current_index = 0, comparable_endpoint[40];
-//    char line[512], *word_list[64], delimit[] = " ";
-//    bool found = false;
-//    FILE *config_file, *aux_file;
-//
-//    config_file = fopen(CONFIG_DUMMY_FILE, "r");
-//    if (config_file == NULL)
-//        error("fopen() - remove_peer - CONFIG_DUMMY_FILE");
-//
-//    //read until we get to a [Peer]
-//    while (!found && fgets(line, 512, config_file)) {
-//        printf("%s", line);
-//    }
-//    fclose(config_file);
+    udp();
 }
 
 
