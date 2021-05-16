@@ -25,7 +25,7 @@
 #define STOP_INTERFACE_COMMAND "wg-quick down wg_dummmy"
 #define REMOVE_OLD_DUMMY_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf"
 #define CREATE_AUX_FILE_COMMAND "touch /etc/wireguard/aux.conf"
-#define REPLACE_OLD_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf && sudo cp /etc/wireguard/aux.conf sudo rm /etc/wireguard/wg_dummmy.conf && sudo rm /etc/wireguard/aux.conf"
+#define REPLACE_OLD_CONFIG_FILE_COMMAND "sudo rm /etc/wireguard/wg_dummmy.conf && sudo cp /etc/wireguard/aux.conf /etc/wireguard/wg_dummmy.conf && sudo rm /etc/wireguard/aux.conf"
 
 bool SHUTDOWN = false;
 bool DUMMY_INTERFACE_CONFIGURED = false;
@@ -727,9 +727,8 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     system(START_DUMMY_INTERFACE_COMMAND);
 }
 
-
 void remove_peer(struct Message *peer_information) {
-    uint start_index, end_index, words_per_line, current_index = 0, comparable_endpoint[40];
+    uint start_index = 0, end_index = 0, words_per_line, current_index = 0, comparable_endpoint[40];
     char line[512], *word_list[64], delimit[] = " ";
     bool found = false;
     FILE *config_file, *aux_file;
@@ -740,7 +739,7 @@ void remove_peer(struct Message *peer_information) {
 
     //read until we get to a [Peer]
     while (!found && fgets(line, 512, config_file)) {
-        if (strcmp(line, "[Peer]") == 0) {
+        if (strcmp(line, "[Peer]\n") == 0) {
             found = true;
             start_index = current_index;
             end_index = current_index;
@@ -754,22 +753,22 @@ void remove_peer(struct Message *peer_information) {
         word_list[words_per_line] = strtok(line, delimit);
         while (word_list[words_per_line] != NULL)
             word_list[++words_per_line] = strtok(NULL, delimit);
-        if (strcmp(word_list[0], "[Peer]") == 0) {
+
+        if (strcmp(word_list[0], "[Peer]\n") == 0) {
             start_index = current_index;
             end_index = current_index;
         }
-
         if (strcmp(word_list[0], "Endpoint") == 0) {
             strcpy(comparable_endpoint, peer_information->ENDPOINT);
             strcat(comparable_endpoint, ":");
             strcat(comparable_endpoint, peer_information->PORT);
-//            strcat(comparable_endpoint, "\n");
+            strcat(comparable_endpoint, "\n");
             if (strcmp (word_list[2], comparable_endpoint) == 0) {
                 bool peer_indices_set = false;
                 found = true;
 
                 while (!peer_indices_set && fgets(line, 512, config_file)) {
-                    if (strcmp(line, "[Peer]") == 0)
+                    if (strcmp(line, "[Peer]\n") == 0)
                         peer_indices_set = true;
                     else
                         current_index++;
@@ -780,7 +779,7 @@ void remove_peer(struct Message *peer_information) {
         current_index++;
     }
     fclose(config_file);
-
+    printf("\tstart: %d\n\tend: %d\n", start_index, end_index);
     //write to AUX_FILE
     system(CREATE_AUX_FILE_COMMAND);
     config_file = fopen(CONFIG_DUMMY_FILE, "r");
@@ -791,8 +790,10 @@ void remove_peer(struct Message *peer_information) {
         error("fopen() - remove_peer - AUX_FILE");
     current_index = 0;
     while (fgets(line, 512, config_file)) {
-        if (current_index < start_index || current_index > end_index)
+        if (current_index < start_index || current_index > end_index) {
             fprintf(aux_file, "%s", line);
+            printf("%s", line);
+        }
         current_index++;
     }
     fclose(config_file);
@@ -920,8 +921,23 @@ void udp() {
 
 int main(int argc, char *argv[]) {
 
-    udp();
+//    udp();
+    remove_peer();
 
+//    uint start_index, end_index, words_per_line, current_index = 0, comparable_endpoint[40];
+//    char line[512], *word_list[64], delimit[] = " ";
+//    bool found = false;
+//    FILE *config_file, *aux_file;
+//
+//    config_file = fopen(CONFIG_DUMMY_FILE, "r");
+//    if (config_file == NULL)
+//        error("fopen() - remove_peer - CONFIG_DUMMY_FILE");
+//
+//    //read until we get to a [Peer]
+//    while (!found && fgets(line, 512, config_file)) {
+//        printf("%s", line);
+//    }
+//    fclose(config_file);
 }
 
 
