@@ -319,34 +319,6 @@ void error(char *message) {
 }
 
 /**
- * Receieves configuration for ip range
- * @param sock - int: socket used
- * @param from - sockaddr_in: we get data from here
- * @param from_length - int: length of
- * @return -
- */
-void receive_configuration(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
-    printf("Receiving configuration...\n");
-    init_SLL(state);
-    state->start_address = (struct in_addr*) malloc(sizeof (struct in_addr));
-    state->end_address = (struct in_addr*) malloc(sizeof (struct in_addr));
-    if (recvfrom(sock, &state->start_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
-        error("recvfrom() - receive_configuration -> receive start address");
-    else
-        printf("\tReceived: start address: %d\n", state->start_address->s_addr);
-
-    if (recvfrom(sock, &state->end_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
-        error("recvfrom() - receive_configuration -> receive end address");
-    else
-        printf("\tReceived: end address: %d\n-----------------\n", state->end_address->s_addr);
-
-    struct in_addr *first_free = (struct in_addr*) malloc(sizeof (struct in_addr));
-    first_free->s_addr = get_random_in_range(state->start_address->s_addr, state->end_address->s_addr);
-
-    state->next_free_address = first_free;
-}
-
-/**
  * Used to send address to client
  * @param sock - int: socket used
  * @param from - sockaddr_in: we get data from here
@@ -379,29 +351,7 @@ void send_address_and_mask(int sock, struct sockaddr_in *from, int from_length, 
  * @param from_length - int: length of
  * @return -
  */
-void return_address(int sock, struct sockaddr_in *from, int from_length, struct State *state) {
-    printf("Getting returned address...\n");
-
-    struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
-    char command[256] = "route del ", address[256];
-
-    if (recvfrom(sock, &returned_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
-        error("recvfrom() - return_address -> receive returned address");
-    else
-        printf("\tReceived: returned address: %d\n-----------------\n", returned_address->s_addr);
-
-
-    if (delete_element(state->list, returned_address) < 0)
-        error("delete_element() - address not found");
-
-    inet_ntop(AF_INET, returned_address, address, 255);
-    strcat(command, address);
-    system(command);
-
-    free(returned_address);
-}
-
-void return_address_v2(struct State *state, in_addr_t address_data) {
+void return_address(struct State *state, in_addr_t address_data) {
 
     struct in_addr *returned_address = (struct in_addr*) malloc(sizeof (struct in_addr));
     char command[256] = "route del ", address[256];
@@ -416,26 +366,6 @@ void return_address_v2(struct State *state, in_addr_t address_data) {
     system(command);
 
     free(returned_address);
-}
-
-/**
- * Receiving real IP address of the client
- * @param sock
- * @param from
- * @param from_length
- * @return address of the client
- */
-struct in_addr* receive_address(int sock, struct sockaddr_in *from, int from_length) {
-    printf("Getting client's IP address...\n");
-
-    struct in_addr *client_address = (struct in_addr*) malloc(sizeof (struct in_addr));
-
-    if (recvfrom(sock, &client_address->s_addr, sizeof (in_addr_t), 0, (struct sockaddr*)from, &from_length) < 0)
-        error("recvfrom() - receive_address -> receive client's address");
-    else
-        printf("\tReceived: client's address: %d\n-----------------\n", client_address->s_addr);
-
-    return client_address;
 }
 
 void configure_dummy_interface() {
@@ -532,53 +462,6 @@ void *check_for_shutdown() {
         return NULL;
     }
     goto LOOP;
-}
-
-
-/**
- * Listens for a request and send it to the handler
- * @param sock
- * @param from
- * @param status
- * @param from_length
- * @param list
- * @return
- */
-int handle_listen(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
-    int request = 0;
-    status = recvfrom(sock, &request, sizeof(int),0, (struct sockaddr*)from, &from_length);
-    if (status < 0)
-        error("recvfrom() - handle_listen -> request failed");
-
-    switch (request) {
-        case -1:
-            //configure
-            receive_configuration(sock, from, from_length, state);
-            break;
-        case 1:
-            //get address
-            send_address_and_mask(sock, from, from_length, state);
-            break;
-        case 2:
-            //return address
-            return_address(sock, from, from_length, state);
-            break;
-        case 3:
-            //receive address of the client
-            receive_address(sock, from, from_length);
-            break;
-        case 4:
-            //renew lease (return + get address)
-            //might not do it this way, because, lease time might be incremented from client side
-            //only will do that if we want to change the address
-            break;
-        case 0:
-            //shutdown
-            shutdown_server(sock, state);
-            break;
-    }
-
-    return request;
 }
 
 bool is_auto_configurable() {
@@ -783,7 +666,6 @@ void remove_peer(struct Message *peer_information) {
         current_index++;
     }
     fclose(config_file);
-    printf("\tstart: %d\n\tend: %d\n", start_index, end_index);
     //write to AUX_FILE
     system(CREATE_AUX_FILE_COMMAND);
     config_file = fopen(CONFIG_DUMMY_FILE, "r");
@@ -794,10 +676,8 @@ void remove_peer(struct Message *peer_information) {
         error("fopen() - remove_peer - AUX_FILE");
     current_index = 0;
     while (fgets(line, 512, config_file)) {
-        if (current_index < start_index || current_index > end_index) {
+        if (current_index < start_index || current_index > end_index)
             fprintf(aux_file, "%s", line);
-            printf("%s", line);
-        }
         current_index++;
     }
     fclose(config_file);
@@ -806,7 +686,7 @@ void remove_peer(struct Message *peer_information) {
     refresh_interface();
 }
 
-void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int status, int from_length, struct State* state) {
+void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int from_length, struct State* state) {
     struct Message *new_message = receive_client_configuration(sock, from, from_length);
 
     switch (new_message->OPTION) {
@@ -815,124 +695,52 @@ void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, in
             add_new_peer(new_message, state->list->tail->data);
             break;
         case 1:
-            return_address_v2(state, new_message->ADDRESS);
+            return_address(state, new_message->ADDRESS);
             remove_peer(new_message);
             break;
     }
 }
 
-
-int run() {
-
+void usage() {
 
     if (!is_auto_configurable()) {
         start_interface(WG_INTERFACE_NAME);
         goto END;
     }
-    start_interface(WG_DUMMY_INTERFACE_NAME);
-    int sock, server_length, from_length, n, message_code = 1, request, status;
-    struct sockaddr_in *server = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct sockaddr_in *from = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
-    struct State *state = (struct State *) malloc(sizeof (struct State));
-
-
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0)
-        error("socket()");
-    server->sin_family = AF_INET;
-    server->sin_addr.s_addr = htonl(INADDR_ANY);
-    server->sin_port = htons(DHCP_PORT);
-    server_length = sizeof (struct sockaddr_in);
-
-    if (bind(sock, (struct sockaddr*)server, server_length) < 0)
-        error("bind()");
-
-    configure_state(state);
-
-    pthread_t thread;
-    pthread_create(&thread, NULL, check_for_shutdown, NULL);
-
-    while(!SHUTDOWN)
-        run_loop(sock, from, server, status, from_length, state);
-
-    pthread_join(thread, NULL);
-    shutdown_server(sock, state);
-
-    END:
-    return 0;
-}
-
-#define BUFLEN 512	//Max length of buffer
-#define PORT 8888	//The port on which to listen for incoming data
-
-void udp() {
 
     struct sockaddr_in *si_me = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
     struct sockaddr_in *si_other = (struct sockaddr_in*) malloc(sizeof (struct sockaddr_in));
 
-        int s, i, slen = sizeof(struct sockaddr_in) , recv_len;
-        char buf[BUFLEN];
+        int s, slen = sizeof(struct sockaddr_in);
 
-        //create a UDP socket
         if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
-        {
             error("socket");
-        }
 
-        // zero out the structure
 
         si_me->sin_family = AF_INET;
-        si_me->sin_port = htons(PORT);
+        si_me->sin_port = htons(DHCP_PORT);
         si_me->sin_addr.s_addr = htonl(INADDR_ANY);
         //bind socket to port
         if( bind(s , (struct sockaddr*)si_me, slen ) == -1)
-        {
             error("bind");
-        }
+
     struct State *state = (struct State *) malloc(sizeof (struct State));
     configure_state(state);
-
     start_interface(WG_DUMMY_INTERFACE_NAME);
-    while (true)
-        run_loop(s, si_other, si_me, 0, slen, state);
-        //keep listening for data
+    pthread_t thread;
+    pthread_create(&thread, NULL, check_for_shutdown, NULL);
 
-//        while(1)
-//        {
-//            printf("Waiting for data...");
-//            fflush(stdout);
-//
-//            //try to receive some data, this is a blocking call
-//            if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == -1)
-//            {
-//                error("recvfrom()");
-//            }
-//
-//            //print details of the client/peer and the data received
-//            printf("Received packet from %s:%d\n", inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
-//            printf("Data: %s\n" , buf);
-//
-//            //now reply the client with the same data
-//            if (sendto(s, buf, recv_len, 0, (struct sockaddr*) &si_other, slen) == -1)
-//            {
-//                error("sendto()");
-//            }
-//        }
+    while(!SHUTDOWN)
+        run_loop(s, si_other, si_me, slen, state);
 
-        close(s);
+    pthread_join(thread, NULL);
+    shutdown_server(s, state);
+    close(s);
+
+    END:
+    exit(EXIT_SUCCESS);
 }
-
-
 
 int main(int argc, char *argv[]) {
-
-    udp();
+    usage();
 }
-
-
-
-
-//TODO: Modify wg0.conf file when new client joins
-//TODO: Remove client from wg0.conf when he logs off
-//TODO: use dummy wg.conf file with AutoSave = False in the case of dynamic usage
