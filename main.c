@@ -29,7 +29,17 @@
 
 bool SHUTDOWN = false;
 bool DUMMY_INTERFACE_CONFIGURED = false;
+int NET_MASK;
 
+/**
+ * Message structure:
+ *  - OPTION - int: specifies wether server should add or remove peer information specified by this message
+ *  - PUBLIC_KEY - char[256]: PUBLIC_KEY of the client, derived from PRIVATE_KEY found in the configuration file
+ *  - ALLOWED_IPS - char[256]: string that represents ips that the client wants to route through the WireGuard tunnel
+ *  - ADDRESS - in_addr_t: address that the client will receive from the server, this address is also being used when client wants to return the address
+ *  - ENDPOINT - char[30]: real endpoint of the client, where server will send the routed packets
+ *  - PORT - char[10]: port to which client WireGuard interface is listening
+ */
 struct Message {
     int OPTION;
     char PUBLIC_KEY[256];
@@ -38,8 +48,6 @@ struct Message {
     char ENDPOINT[30];
     char PORT[10];
 };
-
-int NET_MASK;
 
 /**
  * Node used in SLL
@@ -51,6 +59,13 @@ struct node{
     struct node *next;
 };
 
+/**
+ * State structure:
+ *  - list - *SLL: SLL used to represent addresses already in use
+ *  - start_address: *in_addr: first address of the address pool
+ *  - end_address: *in_addr: last address of the address pool
+ *  - next_free_address: *in_addr: next address that will be given to a client - chosen randomly from [start_address, end_address]
+ */
 struct State {
     struct SLL *list;
     struct in_addr *start_address;
@@ -368,6 +383,9 @@ void return_address(struct State *state, in_addr_t address_data) {
     free(returned_address);
 }
 
+/**
+ * Configures WireGuard interface for the DHCP scenario. It clones the configuration of the default WireGuard interface.
+ */
 void configure_dummy_interface() {
     char line[512], *word_list[64], delimit[] = " ", new_line[512];
     FILE *config_file, *dummy_config_file;
@@ -403,6 +421,10 @@ void configure_dummy_interface() {
     fclose(dummy_config_file);
 }
 
+/**
+ * Starts specified interface, if the DHCP server will be used, it also configures the default interface if it the application just started.
+ * @param interface_name
+ */
 void start_interface(char *interface_name) {
     if (strcmp(interface_name, WG_INTERFACE_NAME) == 0) {
         system(START_INTERFACE_COMMAND);
@@ -464,6 +486,11 @@ void *check_for_shutdown() {
     goto LOOP;
 }
 
+/**
+ * Checks if WireGuard will use or not the DHCP server
+ * @return True, if autoconfigurable option is true
+ *         False, otherwise
+ */
 bool is_auto_configurable() {
     char line[512], *word_list[64], delimit[] = " ";
     FILE *config_file;
@@ -488,6 +515,10 @@ bool is_auto_configurable() {
     return false;
 }
 
+/**
+ * Allocates memory for the state of the state
+ * @param state
+ */
 void initialize_state(struct State *state) {
     state->start_address = (struct in_addr*) malloc(sizeof (struct in_addr));
     state->start_address->s_addr = (in_addr_t*) malloc(sizeof (in_addr_t));
@@ -501,6 +532,10 @@ void initialize_state(struct State *state) {
     init_SLL(state);
 }
 
+/**
+ * Configures initial state of the DHCP server: loads from file the required data in order to build the address pool.
+ * @param state
+ */
 void configure_state(struct State *state) {
     char line[512], *word_list[64], delimit[] = " ";
     FILE *config_file;
@@ -558,7 +593,13 @@ void configure_state(struct State *state) {
           "config file should contain the address of the interface together with the mask to determine allowed peers");
 }
 
-
+/**
+ * Function used in order to receive message from the client.
+ * @param sock
+ * @param from
+ * @param from_length
+ * @return
+ */
 struct Message *receive_client_configuration(int sock, struct sockaddr_in *from, int from_length) {
     struct Message *received_configuration = (struct Message*) malloc(sizeof (struct Message));
 
@@ -578,12 +619,20 @@ struct Message *receive_client_configuration(int sock, struct sockaddr_in *from,
     return received_configuration;
 }
 
+/**
+ * Shuts down and starts the interface in order to load new peers or remove old ones.
+ */
 void refresh_interface() {
     sleep(5);
     system(STOP_INTERFACE_COMMAND);
     system(START_DUMMY_INTERFACE_COMMAND);
 }
 
+/**
+ * Adds new peer by information received in message from client.
+ * @param new_client
+ * @param client_address
+ */
 void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     char command[256] = "route add ", address[256], buffer[2048];
     struct in_addr endpoint;
@@ -605,7 +654,6 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     fprintf(config_file, "%s", buffer);
     fclose(config_file);
 
-    //    system("sudo wg addconf wg_dummmy <(wg-quick strip wg_dummmy)");
     inet_ntop(AF_INET, client_address, address, 255);
     fprintf("ADDR: %s/n", address);
     strcat(command, new_client->ENDPOINT);
@@ -614,6 +662,10 @@ void add_new_peer(struct Message *new_client, struct in_addr *client_address) {
     refresh_interface();
 }
 
+/**
+ * Removes peer that matches specification of data received in message from client.
+ * @param peer_information
+ */
 void remove_peer(struct Message *peer_information) {
     uint start_index = 0, end_index = 0, words_per_line, current_index = 0, comparable_endpoint[40];
     char line[512], *word_list[64], delimit[] = " ";
@@ -624,7 +676,6 @@ void remove_peer(struct Message *peer_information) {
     if (config_file == NULL)
         error("fopen() - remove_peer - CONFIG_DUMMY_FILE");
 
-    //read until we get to a [Peer]
     while (!found && fgets(line, 512, config_file)) {
         if (strcmp(line, "[Peer]\n") == 0) {
             found = true;
@@ -666,7 +717,6 @@ void remove_peer(struct Message *peer_information) {
         current_index++;
     }
     fclose(config_file);
-    //write to AUX_FILE
     system(CREATE_AUX_FILE_COMMAND);
     config_file = fopen(CONFIG_DUMMY_FILE, "r");
     if (config_file == NULL)
@@ -686,6 +736,14 @@ void remove_peer(struct Message *peer_information) {
     refresh_interface();
 }
 
+/**
+ * Waits for message from client and initiates action requested by client: adding a new peer or removing a peer
+ * @param sock
+ * @param from
+ * @param server
+ * @param from_length
+ * @param state
+ */
 void run_loop(int sock, struct sockaddr_in *from, struct sockaddr_in *server, int from_length, struct State* state) {
     struct Message *new_message = receive_client_configuration(sock, from, from_length);
 
@@ -720,7 +778,6 @@ void usage() {
         si_me->sin_family = AF_INET;
         si_me->sin_port = htons(DHCP_PORT);
         si_me->sin_addr.s_addr = htonl(INADDR_ANY);
-        //bind socket to port
         if( bind(s , (struct sockaddr*)si_me, slen ) == -1)
             error("bind");
 
@@ -743,4 +800,5 @@ void usage() {
 
 int main(int argc, char *argv[]) {
     usage();
+    return 0;
 }
